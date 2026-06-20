@@ -1,0 +1,93 @@
+# ── ServiceMonitor: Backend ───────────────────────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-metrics
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames: [backend]
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+
+# ── ServiceMonitor: Frontend ──────────────────────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frontend-metrics
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames: [frontend]
+  selector:
+    matchLabels:
+      app: frontend
+  endpoints:
+    - port: http
+      path: /api/metrics
+      interval: 15s
+
+# ── PrometheusRule: Pod restart & 5xx alerts ─────────────────────────────────
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: car-dealership-alerts
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: car-dealership
+      interval: 30s
+      rules:
+        - alert: HighErrorRate
+          expr: |
+            sum(rate(http_requests_total{status=~"5.."}[5m])) /
+            sum(rate(http_requests_total[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "5xx error rate > 5%"
+
+        - alert: PodRestartingFrequently
+          expr: |
+            increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} restarting frequently"
+
+        - alert: HighAPILatency
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler)
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "P99 API latency > 2s on {{ $labels.handler }}"
+
+        - alert: CacheHitRateLow
+          expr: |
+            (redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total)) < 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Redis cache hit rate below 50%"

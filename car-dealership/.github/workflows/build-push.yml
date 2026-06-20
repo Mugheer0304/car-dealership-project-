@@ -1,0 +1,139 @@
+name: "Build & Push to ECR"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to build (frontend | backend | both)"
+        required: true
+        default: "both"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: "us-east-1"
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend:  ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            backend:
+              - 'backend/**'
+
+  build-frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event.inputs.service == 'frontend' || github.event.inputs.service == 'both'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      short_sha: ${{ steps.sha.outputs.short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/frontend:${{ steps.sha.outputs.short }}
+            ${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/frontend:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          provenance: false
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/frontend:${{ steps.sha.outputs.short }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
+
+  build-backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event.inputs.service == 'backend' || github.event.inputs.service == 'both'
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/backend:${{ steps.sha.outputs.short }}
+            ${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/backend:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+          provenance: false
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/backend:${{ steps.sha.outputs.short }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"

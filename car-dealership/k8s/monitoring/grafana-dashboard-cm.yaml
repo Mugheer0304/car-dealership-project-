@@ -1,0 +1,16 @@
+---
+# The kube-prometheus-stack sidecar auto-imports dashboards
+# from ConfigMaps labelled grafana_dashboard=1 in any namespace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: car-dealership-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  car-dealership-overview.json: |
+    # Loaded from helm/values/grafana-dashboard.json by the deploy workflow.
+    # In CI: kubectl create configmap car-dealership-dashboard \
+    #          --from-file=car-dealership-overview.json=helm/values/grafana-dashboard.json \
+    #          -n monitoring --dry-run=client -o yaml | kubectl apply -f -

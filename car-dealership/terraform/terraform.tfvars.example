@@ -1,0 +1,36 @@
+# terraform.tfvars.example
+# Copy to terraform.tfvars and fill in your values.
+# NEVER commit terraform.tfvars to source control.
+
+aws_region  = "us-east-1"
+environment = "prod"
+project     = "car-dealership"
+
+# VPC
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+public_subnet_cidrs   = ["10.0.1.0/24",  "10.0.2.0/24",  "10.0.3.0/24"]
+private_subnet_cidrs  = ["10.0.11.0/24", "10.0.12.0/24", "10.0.13.0/24"]
+database_subnet_cidrs = ["10.0.21.0/24", "10.0.22.0/24", "10.0.23.0/24"]
+
+# EKS
+cluster_version    = "1.29"
+node_instance_type = "t3.medium"
+node_min_size      = 2
+node_max_size      = 10
+node_desired_size  = 3
+
+# RDS
+db_instance_class        = "db.t3.medium"
+db_name                  = "cardealership"
+db_username              = "dbadmin"
+db_allocated_storage     = 50
+db_max_allocated_storage = 200
+
+# ElastiCache
+redis_node_type       = "cache.t3.micro"
+redis_num_cache_nodes = 2
+
+# Alerting
+alert_email = "ops@your-domain.com"     # <-- REQUIRED: replace with real address

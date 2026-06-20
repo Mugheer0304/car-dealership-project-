@@ -1,0 +1,46 @@
+---
+# Custom Nginx Ingress Controller config for performance + security
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  # Performance
+  worker-processes: "auto"
+  worker-connections: "16384"
+  use-gzip: "true"
+  gzip-level: "5"
+  gzip-types: "application/json application/javascript text/css text/plain application/xml"
+  keep-alive-requests: "1000"
+  upstream-keepalive-connections: "200"
+  upstream-keepalive-time: "60s"
+
+  # Timeouts
+  proxy-connect-timeout: "10"
+  proxy-read-timeout:    "60"
+  proxy-send-timeout:    "60"
+
+  # Security
+  ssl-protocols:       "TLSv1.2 TLSv1.3"
+  ssl-ciphers:         "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+  ssl-session-cache:   "shared:SSL:10m"
+  ssl-session-timeout: "1d"
+  hsts:                "true"
+  hsts-max-age:        "31536000"
+  hsts-include-subdomains: "true"
+
+  # Hide nginx version from headers
+  server-tokens: "false"
+
+  # Logging format (JSON for CloudWatch)
+  log-format-upstream: >-
+    {"time":"$time_iso8601","remote_addr":"$remote_addr",
+    "x_forwarded_for":"$http_x_forwarded_for","request_id":"$req_id",
+    "remote_user":"$remote_user","bytes_sent":$bytes_sent,
+    "request_time":$request_time,"status":$status,
+    "vhost":"$host","request_proto":"$server_protocol",
+    "path":"$uri","request_query":"$args",
+    "request_length":$request_length,
+    "duration":$request_time,"method":"$request_method",
+    "http_referrer":"$http_referer","http_user_agent":"$http_user_agent"}

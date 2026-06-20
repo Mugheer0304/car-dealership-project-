@@ -1,0 +1,137 @@
+name: "Deploy to EKS"
+
+on:
+  workflow_run:
+    workflows: ["Build & Push to ECR"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      frontend_tag:
+        description: "Frontend image tag"
+        required: false
+        default: "latest"
+      backend_tag:
+        description: "Backend image tag"
+        required: false
+        default: "latest"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION:   "us-east-1"
+  CLUSTER_NAME: "car-dealership-prod-eks"
+  ECR_REGISTRY: "${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      # ── Core infrastructure (namespaces, ESO, cert-manager, Istio) ──────────
+      - name: Apply namespaces
+        run: kubectl apply -f k8s/namespaces/
+
+      - name: Install / upgrade External Secrets Operator
+        run: |
+          helm repo add external-secrets https://charts.external-secrets.io
+          helm repo update
+          helm upgrade --install external-secrets external-secrets/external-secrets \
+            --namespace external-secrets --create-namespace \
+            --set installCRDs=true --wait --timeout 5m
+
+      - name: Install / upgrade cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set installCRDs=true --wait --timeout 5m
+
+      - name: Install / upgrade Nginx Ingress
+        run: |
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx --create-namespace \
+            --set controller.service.type=LoadBalancer \
+            --set controller.metrics.enabled=true \
+            --wait --timeout 5m
+
+      # ── Secrets & External Secrets ─────────────────────────────────────────
+      - name: Apply ExternalSecrets
+        run: kubectl apply -f k8s/external-secrets/
+
+      # ── Network Policies ───────────────────────────────────────────────────
+      - name: Apply NetworkPolicies
+        run: kubectl apply -f k8s/network-policies/
+
+      # ── Determine image tags ───────────────────────────────────────────────
+      - name: Set image tags
+        id: tags
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          FE_TAG="${{ github.event.inputs.frontend_tag || env.SHORT_SHA }}"
+          BE_TAG="${{ github.event.inputs.backend_tag  || env.SHORT_SHA }}"
+          echo "frontend_tag=$FE_TAG" >> $GITHUB_OUTPUT
+          echo "backend_tag=$BE_TAG"  >> $GITHUB_OUTPUT
+        env:
+          SHORT_SHA: $(git rev-parse --short HEAD)
+
+      # ── Patch image tags in manifests and apply ────────────────────────────
+      - name: Deploy Frontend
+        run: |
+          sed -i "s|ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/car-dealership-prod/frontend:IMAGE_TAG|${{ env.ECR_REGISTRY }}/car-dealership-prod/frontend:${{ steps.tags.outputs.frontend_tag }}|g" \
+            k8s/deployments/frontend-deployment.yaml
+          kubectl apply -f k8s/deployments/frontend-deployment.yaml
+          kubectl rollout status deployment/frontend -n frontend --timeout=5m
+
+      - name: Deploy Backend
+        run: |
+          sed -i "s|ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/car-dealership-prod/backend:IMAGE_TAG|${{ env.ECR_REGISTRY }}/car-dealership-prod/backend:${{ steps.tags.outputs.backend_tag }}|g" \
+            k8s/deployments/backend-deployment.yaml
+          kubectl apply -f k8s/deployments/backend-deployment.yaml
+          kubectl rollout status deployment/backend -n backend --timeout=5m
+
+      # ── Ingress, HPA, PDB, Monitoring ─────────────────────────────────────
+      - name: Apply remaining manifests
+        run: |
+          kubectl apply -f k8s/ingress/
+          kubectl apply -f k8s/hpa/
+          kubectl apply -f k8s/monitoring/
+
+      # ── Prometheus + Grafana via Helm ──────────────────────────────────────
+      - name: Install / upgrade kube-prometheus-stack
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+          helm upgrade --install kube-prometheus prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace \
+            -f helm/values/prometheus-values.yaml \
+            --wait --timeout 10m
+
+      - name: Verify all pods running
+        run: |
+          kubectl get pods -n frontend
+          kubectl get pods -n backend
+          kubectl get pods -n monitoring
+          echo "--- Ingress ---"
+          kubectl get ingress -A

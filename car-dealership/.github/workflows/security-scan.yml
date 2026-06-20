@@ -1,0 +1,157 @@
+name: "Security Scan"
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday at 06:00 UTC
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/Dockerfile'
+      - 'backend/Dockerfile'
+      - 'terraform/**'
+      - 'k8s/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write    # Upload SARIF to GitHub Security tab
+  id-token: write
+
+env:
+  AWS_REGION: "us-east-1"
+
+jobs:
+  # ── Trivy image scan (latest ECR images) ────────────────────────────────────
+  trivy-images:
+    name: Trivy – Container Images
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Trivy – Frontend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/frontend:latest"
+          format: sarif
+          output: trivy-frontend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Frontend SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-frontend.sarif
+          category: trivy-frontend
+
+      - name: Trivy – Backend image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.login-ecr.outputs.registry }}/car-dealership-prod/backend:latest"
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Backend SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-backend
+
+  # ── Trivy filesystem / IaC scan ─────────────────────────────────────────────
+  trivy-iac:
+    name: Trivy – IaC & Secrets
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy – Filesystem (secrets + misconfigs)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: CRITICAL,HIGH
+          scanners: secret,misconfig
+
+      - name: Upload FS SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+  # ── tfsec – Terraform security linting ──────────────────────────────────────
+  tfsec:
+    name: tfsec – Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: terraform/
+          format: sarif
+          sarif_file: tfsec.sarif
+          soft_fail: false
+
+      - name: Upload tfsec SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: tfsec.sarif
+          category: tfsec
+
+  # ── Checkov – K8s manifest misconfig scan ───────────────────────────────────
+  checkov:
+    name: Checkov – K8s Manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: k8s/
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov.sarif
+          soft_fail: false
+          skip_check: CKV_K8S_28    # hostPID not applicable here
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  # ── GitLeaks – detect accidental secrets in git history ─────────────────────
+  gitleaks:
+    name: GitLeaks – Secret Detection
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for leak detection
+
+      - name: GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,129 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "title": "Car Dealership – Application Overview",
+  "uid": "car-dealership-overview",
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request Rate (RPS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{namespace=~\"frontend|backend\"}[5m])) by (namespace)",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "5xx Error Rate (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(http_requests_total{status=~\"5..\"}[5m])) / sum(rate(http_requests_total[5m]))",
+          "legendFormat": "error %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red",   "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "P99 API Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{namespace=\"backend\"}[5m])) by (le)) * 1000",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace=\"backend\"}[5m])) by (le)) * 1000",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    },
+    {
+      "id": 4,
+      "title": "Redis Cache Hit Rate (%)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "100 * redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total)",
+          "legendFormat": "hit rate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": {
+            "steps": [
+              { "color": "red",    "value": 0  },
+              { "color": "yellow", "value": 50 },
+              { "color": "green",  "value": 75 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Pod Count by Namespace",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "targets": [
+        {
+          "expr": "count(kube_pod_status_phase{namespace=\"frontend\",phase=\"Running\"})",
+          "legendFormat": "frontend"
+        },
+        {
+          "expr": "count(kube_pod_status_phase{namespace=\"backend\",phase=\"Running\"})",
+          "legendFormat": "backend"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Pod Restarts (last 15m)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"frontend|backend\"}[15m])) by (pod, namespace)",
+          "legendFormat": "{{namespace}}/{{pod}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Memory Usage by Pod",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "expr": "sum(container_memory_working_set_bytes{namespace=~\"frontend|backend\",container!=\"\"}) by (pod)",
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ]
+}

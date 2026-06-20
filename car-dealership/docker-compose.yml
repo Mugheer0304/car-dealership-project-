@@ -1,0 +1,111 @@
+version: "3.9"
+
+# Local development stack — mirrors production topology.
+# Does NOT use real AWS services. Secrets are plain env vars here (dev only).
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       cardealership
+      POSTGRES_USER:     devuser
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devuser -d cardealership"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ───────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Backend (FastAPI) ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runner
+    restart: unless-stopped
+    environment:
+      DB_HOST:       postgres
+      DB_PORT:       "5432"
+      DB_NAME:       cardealership
+      DB_USER:       devuser
+      DB_PASSWORD:   devpassword
+      REDIS_HOST:    redis
+      REDIS_PORT:    "6379"
+      REDIS_TLS:     "false"
+      REDIS_PASSWORD: ""
+      ALLOWED_ORIGINS: "http://localhost:3000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend/app:/app/app   # hot-reload in dev
+    command: >
+      uvicorn app.main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+        --log-level info
+
+  # ── Frontend (Next.js) ──────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: builder        # use builder stage for hot-reload
+    restart: unless-stopped
+    environment:
+      NODE_ENV:    development
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src    # hot-reload
+      - ./frontend/public:/app/public
+    command: npm run dev
+
+  # ── Seed DB (one-shot) ─────────────────────────────────────────────────────
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runner
+    environment:
+      DB_HOST:     postgres
+      DB_PORT:     "5432"
+      DB_NAME:     cardealership
+      DB_USER:     devuser
+      DB_PASSWORD: devpassword
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python /scripts/seed_db.py
+    volumes:
+      - ./scripts:/scripts
+    profiles: ["seed"]    # run with: docker compose --profile seed up seed
+
+volumes:
+  postgres_data:

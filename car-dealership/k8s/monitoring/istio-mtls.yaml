@@ -1,0 +1,61 @@
+# Enforce STRICT mTLS in both namespaces (Istio must be installed)
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: frontend
+spec:
+  mtls:
+    mode: STRICT
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: backend
+spec:
+  mtls:
+    mode: STRICT
+
+# AuthorizationPolicy: backend only accepts calls from frontend service account
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: backend-allow-frontend
+  namespace: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/frontend/sa/frontend-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/*", "/health", "/ready", "/metrics"]
+
+# Deny all other traffic to backend
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: backend-deny-all
+  namespace: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  action: DENY
+  rules:
+    - from:
+        - source:
+            notPrincipals:
+              - "cluster.local/ns/frontend/sa/frontend-sa"
+              - "cluster.local/ns/monitoring/sa/prometheus-sa"

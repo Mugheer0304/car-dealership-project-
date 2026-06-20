@@ -1,0 +1,91 @@
+# helm/values/prometheus-values.yaml
+# kube-prometheus-stack – production values for car dealership
+
+grafana:
+  enabled: true
+  adminPassword: ""          # Set via --set grafana.adminPassword=... or Secret
+  persistence:
+    enabled: true
+    size: 5Gi
+  ingress:
+    enabled: true
+    annotations:
+      kubernetes.io/ingress.class: nginx
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/auth-type: basic
+      nginx.ingress.kubernetes.io/auth-secret: grafana-basic-auth
+    hosts:
+      - grafana.your-domain.com
+    tls:
+      - secretName: grafana-tls
+        hosts: [grafana.your-domain.com]
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 20Gi
+    # Scrape all ServiceMonitors and PodMonitors in any namespace
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    # Resource limits
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+
+alertmanager:
+  alertmanagerSpec:
+    retention: 120h
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: [alertname, cluster]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 12h
+      receiver: sns-alerts
+    receivers:
+      - name: sns-alerts
+        webhook_configs:
+          - url: "http://sns-alertmanager-webhook.monitoring.svc.cluster.local/alert"
+
+# Node exporter – metrics from EKS worker nodes
+nodeExporter:
+  enabled: true
+
+# kube-state-metrics – K8s object metrics
+kubeStateMetrics:
+  enabled: true
+
+# Scrape interval
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s
+    evaluationInterval: 15s
